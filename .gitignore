@@ -173,4 +173,8 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-dataset/
+# 忽略本地数据集
+dataset/train/*
+dataset/test/*
+dataset/val/*
+*.csv
