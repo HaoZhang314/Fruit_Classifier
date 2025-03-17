@@ -33,31 +33,41 @@ if project_root not in sys.path:
 # 导入config包
 from config import load_config
 
+# 导入配置文件
+config_path = os.path.join(project_root, 'config', 'config.yaml')
+config = load_config(config_path)
 
-def get_transforms(mode: str = 'train', img_size: int = 224) -> transforms.Compose:
+def get_transforms(mode: str = 'train', img_size: int = config['model']['img_size']) -> transforms.Compose:
     """
     获取数据预处理和增强的变换
     
     Args:
         mode (str): 模式，'train'表示训练模式，'test'表示测试模式
-        img_size (int): 图像大小，默认为224x224
+        img_size (int): 训练图像大小
     
     Returns:
         transforms.Compose: 组合的变换操作
     """
     # 基础变换 - 所有模式都需要的变换
     base_transforms = [
+        # 调整图像大小
         transforms.Resize((img_size, img_size)),
+        # 转换为Tensor
         transforms.ToTensor(),
+        # 标准化，根据模型预训练时的均值和标准差
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ]
     
     # 训练模式额外的数据增强
     if mode == 'train':
         train_transforms = [
+            # 随机水平翻转
             transforms.RandomHorizontalFlip(),
+            # 随机旋转
             transforms.RandomRotation(15),
+            # 随机颜色抖动
             transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.05),
+            # 随机仿射变换
             transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
         ]
         return transforms.Compose(train_transforms + base_transforms)
@@ -158,12 +168,14 @@ class FruitDataset(Dataset):
 class FruitDataLoader:
     """
     水果数据加载器
-    
-    封装了DataLoader的创建，提供便捷的数据加载接口
+
     """
     
-    def __init__(self, csv_file: str, batch_size: int = 32, img_size: int = 224, 
-                 num_workers: int = 4, shuffle: bool = True):
+    def __init__(self, csv_file: str,
+                 batch_size: int = config['device']['batch_size'],
+                 img_size: int = config['model']['img_size'], 
+                 num_workers: int = config['device']['num_workers'], 
+                 shuffle: bool = True):
         """
         初始化数据加载器
         
@@ -264,7 +276,6 @@ def get_data_loaders(config: Dict) -> Tuple[DataLoader, DataLoader, Tuple[List[s
 
 
 if __name__ == '__main__':
-    # 示例：如何使用这个模块
     
     # 获取项目根目录
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -282,9 +293,9 @@ if __name__ == '__main__':
     # 创建数据加载器
     loader = FruitDataLoader(
         csv_file=csv_file,
-        batch_size=32,
-        img_size=224,
-        num_workers=4
+        batch_size=config['device']['batch_size'],
+        img_size=config['model']['img_size'],
+        num_workers=config['device']['num_workers']
     )
     
     # 获取训练集和测试集的DataLoader

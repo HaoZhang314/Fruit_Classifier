@@ -6,3 +6,15 @@ data:
   processed_dir: data
   # 预处理后的CSV文件名
   dataset_csv: fruit_dataset.csv
+
+#模型相关配置
+model:
+  # 训练图像大小
+  img_size: 380 # EfficientNet-B4的输入大小
+
+# 设备相关配置
+device:
+  # 数据加载工作线程数
+  num_workers: 4
+  # 批次大小
+  batch_size: 32
