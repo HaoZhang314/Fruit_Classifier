@@ -1,7 +1,26 @@
+"""数据预处理模块
+
+这个模块主要负责水果图像数据集的预处理工作，包括：
+1. 从原始数据集目录创建结构化的CSV文件，记录图片路径、水果类型和腐烂状态
+
+
+主要函数：
+- create_dataset_csv: 创建数据集的CSV索引文件
+
+"""
+
 import os
-import yaml
+import sys
 import pandas as pd
 from pathlib import Path
+# 添加项目根目录到Python路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+# 导入配置模块
+from config import load_config
 
 def create_dataset_csv(dataset_dir: str, output_csv: str) -> None:
     """
@@ -62,19 +81,6 @@ def create_dataset_csv(dataset_dir: str, output_csv: str) -> None:
     print(f'总样本数: {len(df)}')
     print('\n样本分布:')
     print(df.groupby(['split', 'fruit_type', 'state']).size().unstack(fill_value=0))
-
-def load_config(config_path: str) -> dict:
-    """
-    加载配置文件
-    
-    Args:
-        config_path (str): 配置文件路径
-        
-    Returns:
-        dict: 配置内容
-    """
-    with open(config_path, 'r', encoding='utf-8') as f:
-        return yaml.safe_load(f)
 
 if __name__ == '__main__':
     # 获取项目根目录
