@@ -178,3 +178,5 @@ dataset/train/*
 dataset/test/*
 dataset/val/*
 *.csv
+
+.DS_Store
