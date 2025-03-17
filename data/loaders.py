@@ -259,12 +259,25 @@ def get_data_loaders(config: Dict) -> Tuple[DataLoader, DataLoader, Tuple[List[s
         Tuple[DataLoader, DataLoader, Tuple[List[str], List[str]]]: 
             (训练集DataLoader, 测试集DataLoader, (水果类型列表, 腐烂状态列表))
     """
+    # 获取项目根目录
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
+    
+    # 构建CSV文件的完整路径
+    csv_file = os.path.join(
+        project_root,
+        config['data'].get('processed_dir', 'data'),
+        config['data']['dataset_csv']
+    )
+    
+    print(f"使用数据集文件: {csv_file}")
+    
     # 创建数据加载器
     loader = FruitDataLoader(
-        csv_file=config['data']['dataset_csv'],
-        batch_size=config['training']['batch_size'],
-        img_size=config['data']['img_size'],
-        num_workers=config['data']['num_workers'],
+        csv_file=csv_file,
+        batch_size=config['device']['batch_size'],
+        img_size=config['model']['img_size'],
+        num_workers=config['device']['num_workers'],
         shuffle=True
     )
     
