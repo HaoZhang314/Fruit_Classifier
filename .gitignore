@@ -181,4 +181,5 @@ dataset/val/*
 
 .DS_Store
 augmentation_demo.png
+checkpoints/best_model.pth
 archive.zip
