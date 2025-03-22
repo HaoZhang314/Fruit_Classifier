@@ -477,7 +477,7 @@ def main():
     
     # 加载配置
     if args.config is None:
-        config_path = os.path.join(project_root, 'config.json')
+        config_path = os.path.join(project_root, 'config', 'config.yaml')
     else:
         config_path = args.config
     
@@ -488,10 +488,12 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     
     # 获取数据加载器
-    _, _, test_loader = get_data_loaders(
-        config,
-        batch_size=args.batch_size or config['train']['batch_size']
-    )
+    # 如果命令行指定了batch_size，则临时修改配置中的值
+    if args.batch_size:
+        config['device']['batch_size'] = args.batch_size
+    
+    # 获取数据加载器
+    _, test_loader, class_info = get_data_loaders(config)
     
     # 获取设备
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

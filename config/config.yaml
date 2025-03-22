@@ -18,7 +18,7 @@ model:
   # 骨干网络类型，支持 efficientnet_b3, efficientnet_b4, resnet18, resnet34, resnet50, resnet101
   backbone: resnet50
   # 是否使用预训练模型
-  pretrained: true
+  pretrained: false
 
 # 设备相关配置
 device:
@@ -32,13 +32,13 @@ device:
 # 训练相关配置
 train:
   # 训练轮数
-  epochs: 30
+  epochs: 20
   # 检查点保存目录
   save_dir: checkpoints
   # 是否保存最佳模型
   save_best: true
   # 早停轮数，当连续多少轮验证集指标没有提升时停止训练
-  early_stopping: 10
+  early_stopping: 5
   
   # 优化器参数
   optimizer: adam  # 支持 adam, sgd, adamw
