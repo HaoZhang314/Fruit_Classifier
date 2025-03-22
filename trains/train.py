@@ -74,14 +74,32 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=None, help='训练轮数')
     parser.add_argument('--batch_size', type=int, default=None, help='批次大小')
     parser.add_argument('--learning_rate', type=float, default=None, help='学习率')
+    parser.add_argument('--weight_decay', type=float, default=None, help='权重衰减')
+    parser.add_argument('--momentum', type=float, default=None, help='动量 (仅用于SGD)')
     parser.add_argument('--optimizer', type=str, default=None, help='优化器 (adam, sgd, adamw)')
     parser.add_argument('--scheduler', type=str, default=None, help='学习率调度器 (step, cosine, plateau, none)')
     parser.add_argument('--early_stopping', type=int, default=None, help='早停轮数')
     parser.add_argument('--fruit_weight', type=float, default=None, help='水果类型损失权重')
     parser.add_argument('--state_weight', type=float, default=None, help='腐烂状态损失权重')
+    
+    # 模型参数
     parser.add_argument('--no_pretrained', action='store_true', help='不使用预训练模型')
     parser.add_argument('--backbone', type=str, default=None, help='骨干网络类型 (efficientnet_b3, efficientnet_b4, resnet18, resnet34, resnet50, resnet101)')
+    
+    # 检查点保存参数
+    parser.add_argument('--save_best', action='store_true', dest='save_best', help='保存最佳模型')
+    parser.add_argument('--no_save_best', action='store_false', dest='save_best', help='不保存最佳模型')
+    parser.add_argument('--save_latest', action='store_true', dest='save_latest', help='保存最新模型')
+    parser.add_argument('--no_save_latest', action='store_false', dest='save_latest', help='不保存最新模型')
+    parser.add_argument('--save_checkpoints', action='store_true', dest='save_checkpoints', help='启用周期性保存检查点')
+    parser.add_argument('--no_save_checkpoints', action='store_false', dest='save_checkpoints', help='禁用周期性保存检查点')
+    parser.add_argument('--save_freq', type=int, default=None, help='检查点保存频率（每多少轮保存一次）')
+    
+    # 其他参数
     parser.add_argument('--seed', type=int, default=42, help='随机种子')
+    
+    # 设置save_best、save_latest和save_checkpoints的默认值为None，这样在update_config_from_args中可以判断是否指定了这些参数
+    parser.set_defaults(save_best=None, save_latest=None, save_checkpoints=None)
     
     return parser.parse_args()
 
@@ -100,72 +118,97 @@ def get_train_config(config_path: str = None) -> Dict[str, Any]:
     if config_path is None:
         config_path = os.path.join(project_root, 'config', 'config.yaml')
     
-    # 加载基础配置
+    # 加载配置文件
     config = load_config(config_path)
     
-    # 如果配置中没有train部分，添加默认训练配置
+    # 创建必要的配置结构
     if 'train' not in config:
         config['train'] = {}
+    if 'model' not in config:
+        config['model'] = {}
+    if 'device' not in config:
+        config['device'] = {}
     
-    # 设置默认训练参数
     train_config = config['train']
+    device_config = config['device']
     
-    # 训练基本参数
-    train_config.setdefault('epochs', 50)
-    train_config.setdefault('save_dir', os.path.join(project_root, 'checkpoints'))
-    train_config.setdefault('early_stopping', 10)
-    train_config.setdefault('save_best', True)
+    # 定义默认配置字典
+    default_train_config = {
+        # 训练基本参数
+        'epochs': 50,
+        'save_dir': os.path.join(project_root, 'checkpoints'),
+        'early_stopping': 10,
+        'save_best': True,
+        'save_latest': True,
+        'save_checkpoints': True,
+        'save_freq': 5,
+        
+        # 优化器参数
+        'optimizer': 'adam',
+        'learning_rate': 0.001,
+        'weight_decay': 0.0001,
+        'momentum': 0.9,  # 仅用于SGD
+        
+        # 学习率调度器参数
+        'scheduler': 'cosine',
+        'step_size': 10,  # 仅用于StepLR
+        'gamma': 0.1,     # 仅用于StepLR
+        'patience': 5,    # 仅用于ReduceLROnPlateau
+        'factor': 0.1,    # 仅用于ReduceLROnPlateau
+        
+        # 多任务损失权重
+        'fruit_weight': 1.0,
+        'state_weight': 1.0,
+        
+        # 批次大小，默认值，如果设备配置中有批次大小则会被覆盖
+        'batch_size': 32,
+    }
     
-    # 混合精度训练设置
-    if 'device' in config and 'mixed_precision' in config['device']:
-        train_config.setdefault('use_amp', config['device']['mixed_precision'])
+    # 定义默认数据增强配置
+    default_augmentation_config = {
+        'horizontal_flip': True,
+        'rotation_angle': 15,
+        'brightness': 0.1,
+        'contrast': 0.1,
+        'saturation': 0.1,
+        'hue': 0.05,
+        'random_erasing': 0.2,
+        'gaussian_noise': 0.05,
+        'random_resized_crop': True,
+        'mixup': {
+            'enabled': False,
+            'alpha': 0.2
+        }
+    }
+    
+    # 只为配置文件中缺失的参数设置默认值
+    for key, value in default_train_config.items():
+        if key not in train_config:
+            train_config[key] = value
+    
+    # 处理批次大小，优先使用设备配置中的批次大小
+    if 'batch_size' in device_config:
+        train_config['batch_size'] = device_config['batch_size']
+    
+    # 处理混合精度训练设置
+    if 'mixed_precision' in device_config:
+        train_config['use_amp'] = device_config['mixed_precision']
     else:
-        train_config.setdefault('use_amp', False)
+        train_config['use_amp'] = False
     
-    # 优化器参数
-    train_config.setdefault('optimizer', 'adam')
-    train_config.setdefault('learning_rate', 0.001)
-    train_config.setdefault('weight_decay', 0.0001)
-    train_config.setdefault('momentum', 0.9)  # 仅用于SGD
-    
-    # 学习率调度器参数
-    train_config.setdefault('scheduler', 'cosine')
-    train_config.setdefault('step_size', 10)  # 仅用于StepLR
-    train_config.setdefault('gamma', 0.1)     # 仅用于StepLR
-    train_config.setdefault('patience', 5)    # 仅用于ReduceLROnPlateau
-    train_config.setdefault('factor', 0.1)    # 仅用于ReduceLROnPlateau
-    
-    # 多任务损失权重
-    train_config.setdefault('fruit_weight', 1.0)
-    train_config.setdefault('state_weight', 1.0)
-    
-    # 模型参数已移至model部分
-    
-    # 将数据增强参数从配置文件的augmentation部分获取
+    # 处理数据增强配置
     if 'augmentation' in config:
-        # 如果配置文件中有augmentation部分，直接使用
-        train_config['augmentation'] = config['augmentation']
+        # 如果配置文件中有augmentation部分，将其复制到train_config中
+        train_config['augmentation'] = config['augmentation'].copy()
     elif 'augmentation' not in train_config:
         # 如果配置文件和train_config中都没有augmentation，创建默认配置
         train_config['augmentation'] = {}
     
-    # 设置默认的图像级别数据增强参数
+    # 设置默认的数据增强参数
     aug_config = train_config['augmentation']
-    aug_config.setdefault('horizontal_flip', True)
-    aug_config.setdefault('rotation_angle', 15)
-    aug_config.setdefault('brightness', 0.1)
-    aug_config.setdefault('contrast', 0.1)
-    aug_config.setdefault('saturation', 0.1)
-    aug_config.setdefault('hue', 0.05)
-    aug_config.setdefault('random_erasing', 0.2)
-    aug_config.setdefault('gaussian_noise', 0.05)
-    aug_config.setdefault('random_resized_crop', True)
-    
-    # 设置默认的批次级别数据增强参数
-    if 'mixup' not in aug_config:
-        aug_config['mixup'] = {}
-    aug_config['mixup'].setdefault('enabled', False)
-    aug_config['mixup'].setdefault('alpha', 0.2)
+    for key, value in default_augmentation_config.items():
+        if key not in aug_config:
+            aug_config[key] = value
     
     return config
 
@@ -197,17 +240,23 @@ def update_config_from_args(config: Dict[str, Any], args: Dict[str, Any]) -> Dic
     if 'learning_rate' in args and args['learning_rate'] is not None:
         train_config['learning_rate'] = args['learning_rate']
     
+    if 'weight_decay' in args and args['weight_decay'] is not None:
+        train_config['weight_decay'] = args['weight_decay']
+    
+    if 'momentum' in args and args['momentum'] is not None:
+        train_config['momentum'] = args['momentum']
+    
     if 'optimizer' in args and args['optimizer'] is not None:
         train_config['optimizer'] = args['optimizer']
     
     if 'scheduler' in args and args['scheduler'] is not None:
         train_config['scheduler'] = args['scheduler']
     
+    # 将batch_size从设备配置移到训练配置中，保持一致性
     if 'batch_size' in args and args['batch_size'] is not None:
+        train_config['batch_size'] = args['batch_size']
+        # 同时更新device_config中的batch_size，保持兼容性
         device_config['batch_size'] = args['batch_size']
-    
-    if 'weight_decay' in args and args['weight_decay'] is not None:
-        train_config['weight_decay'] = args['weight_decay']
     
     if 'early_stopping' in args and args['early_stopping'] is not None:
         train_config['early_stopping'] = args['early_stopping']
@@ -217,9 +266,22 @@ def update_config_from_args(config: Dict[str, Any], args: Dict[str, Any]) -> Dic
     
     if 'state_weight' in args and args['state_weight'] is not None:
         train_config['state_weight'] = args['state_weight']
+    
+    # 更新检查点保存相关参数
+    if 'save_best' in args and args['save_best'] is not None:
+        train_config['save_best'] = args['save_best']
+    
+    if 'save_latest' in args and args['save_latest'] is not None:
+        train_config['save_latest'] = args['save_latest']
+    
+    if 'save_checkpoints' in args and args['save_checkpoints'] is not None:
+        train_config['save_checkpoints'] = args['save_checkpoints']
+    
+    if 'save_freq' in args and args['save_freq'] is not None:
+        train_config['save_freq'] = args['save_freq']
         
+    # 更新模型参数
     if 'backbone' in args and args['backbone'] is not None:
-        # 只更新模型配置中的backbone
         model_config['backbone'] = args['backbone']
         
     if 'no_pretrained' in args and args['no_pretrained']:
@@ -287,6 +349,7 @@ def main():
     early_stopping = config['train'].get('early_stopping', 10)
     save_best = config['train'].get('save_best', True)
     save_latest = config['train'].get('save_latest', True)
+    save_checkpoints = config['train'].get('save_checkpoints', True)
     save_freq = config['train'].get('save_freq', 5)
     
     # 打印训练设置
@@ -294,12 +357,14 @@ def main():
     print(f"早停轮数: {early_stopping}")
     print(f"保存最佳模型: {save_best}")
     print(f"保存最新模型: {save_latest}")
+    print(f"启用周期性检查点: {save_checkpoints}")
     print(f"检查点保存频率: 每{save_freq}轮")
     
     trainer.train(
         num_epochs=epochs,
         save_best=save_best,
         save_latest=save_latest,
+        save_checkpoints=save_checkpoints,
         save_freq=save_freq,
         early_stopping=early_stopping
     )

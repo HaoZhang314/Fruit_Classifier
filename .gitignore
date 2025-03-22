@@ -183,7 +183,4 @@ dataset/val/*
 augmentation_demo.png
 checkpoints/best_model.pth
 archive.zip
-checkpoints/checkpoint_2.pth
-checkpoints/checkpoint_4.pth
-checkpoints/checkpoint_6.pth
-checkpoints/latest_model.pth
+checkpoints/

@@ -13,7 +13,7 @@ model:
   # 训练图像大小
   img_size: 224 # EfficientNet-B4的输入大小380
   # 骨干网络类型，支持 efficientnet_b3, efficientnet_b4, resnet18, resnet34, resnet50, resnet101
-  backbone: resnet50
+  backbone: efficientnet_b3
   # 是否使用预训练模型
   pretrained: false
 
@@ -36,6 +36,8 @@ train:
   save_best: true
   # 是否保存最新模型
   save_latest: true
+  # 是否启用周期性保存检查点
+  save_checkpoints: false
   # 每多少个epoch保存一次检查点
   save_freq: 2
   # 早停轮数，当连续多少轮验证集指标没有提升时停止训练

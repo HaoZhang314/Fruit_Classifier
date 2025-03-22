@@ -314,7 +314,7 @@ class Trainer:
             'state_acc': state_acc
         }
     
-    def train(self, num_epochs: int, save_best: bool = True, save_latest: bool = True, save_freq: int = 5, early_stopping: int = 0) -> Dict[str, List[float]]:
+    def train(self, num_epochs: int, save_best: bool = True, save_latest: bool = True, save_checkpoints: bool = True, save_freq: int = 5, early_stopping: int = 0) -> Dict[str, List[float]]:
         """
         训练模型
         
@@ -322,6 +322,7 @@ class Trainer:
             num_epochs (int): 训练轮数
             save_best (bool): 是否保存最佳模型
             save_latest (bool): 是否在每个epoch后保存最新模型
+            save_checkpoints (bool): 是否启用周期性保存检查点
             save_freq (int): 每多少个epoch保存一次检查点，0表示不保存周期性检查点
             early_stopping (int): 早停轮数，0表示不使用早停
             
@@ -330,7 +331,7 @@ class Trainer:
         """
         print(f"开始训练，共{num_epochs}个epoch")
         print(f"使用设备: {self.device}")
-        print(f"保存设置: 最佳模型={save_best}, 最新模型={save_latest}, 检查点频率={save_freq}轮")
+        print(f"保存设置: 最佳模型={save_best}, 最新模型={save_latest}, 启用周期性检查点={save_checkpoints}, 检查点频率={save_freq}轮")
         
         # 早停计数器
         no_improve_count = 0
@@ -384,7 +385,7 @@ class Trainer:
                 no_improve_count += 1
                 
             # 保存周期性检查点
-            if save_freq > 0 and (epoch + 1) % save_freq == 0:
+            if save_checkpoints and save_freq > 0 and (epoch + 1) % save_freq == 0:
                 checkpoint_path = os.path.join(self.save_dir, f'checkpoint_{epoch+1}.pth')
                 self.save_model(checkpoint_path)
                 print(f"保存第{epoch+1}轮检查点")
