@@ -286,15 +286,21 @@ def main():
     epochs = config['train'].get('epochs', 50)
     early_stopping = config['train'].get('early_stopping', 10)
     save_best = config['train'].get('save_best', True)
+    save_latest = config['train'].get('save_latest', True)
+    save_freq = config['train'].get('save_freq', 5)
     
     # 打印训练设置
     print(f"训练轮数: {epochs}")
     print(f"早停轮数: {early_stopping}")
     print(f"保存最佳模型: {save_best}")
+    print(f"保存最新模型: {save_latest}")
+    print(f"检查点保存频率: 每{save_freq}轮")
     
     trainer.train(
         num_epochs=epochs,
         save_best=save_best,
+        save_latest=save_latest,
+        save_freq=save_freq,
         early_stopping=early_stopping
     )
     

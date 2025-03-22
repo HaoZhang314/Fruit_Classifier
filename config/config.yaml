@@ -7,9 +7,6 @@ data:
   # 预处理后的CSV文件名
   dataset_csv: fruit_dataset.csv
   # 训练集、验证集和测试集划分比例
-  train_ratio: 0.7
-  val_ratio: 0.15
-  test_ratio: 0.15
 
 # 模型相关配置
 model:
@@ -37,6 +34,10 @@ train:
   save_dir: checkpoints
   # 是否保存最佳模型
   save_best: true
+  # 是否保存最新模型
+  save_latest: true
+  # 每多少个epoch保存一次检查点
+  save_freq: 2
   # 早停轮数，当连续多少轮验证集指标没有提升时停止训练
   early_stopping: 5
   
