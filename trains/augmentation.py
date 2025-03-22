@@ -240,7 +240,10 @@ def visualize_augmentations(image_path: str, config: Dict = None, num_samples: i
     
     # 保存或显示图表
     if save_path:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        # 如果save_path有目录部分，则创建目录
+        dirname = os.path.dirname(save_path)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
         plt.savefig(save_path)
         plt.close()
     else:

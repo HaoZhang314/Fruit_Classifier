@@ -1,8 +1,8 @@
 """多任务水果分类模型
 
-这个模块实现基于EfficientNet-B4的多任务分类模型，用于同时识别水果的类型和腐烂状态。
+这个模块实现基于可选骨干网络的多任务分类模型，用于同时识别水果的类型和腐烂状态。
 主要特点：
-1. 使用预训练的EfficientNet-B4作为特征提取器
+1. 支持多种骨干网络作为特征提取器（EfficientNet-B4、ResNet50等）
 2. 实现两个分支头，分别用于水果类型分类和腐烂状态判断
 3. 支持多任务联合训练
 
@@ -36,16 +36,17 @@ class FruitClassifier(nn.Module):
     """
     多任务水果分类模型
     
-    基于EfficientNet-B4实现的多任务分类模型，同时识别水果类型和腐烂状态
+    基于可选骨干网络实现的多任务分类模型，同时识别水果类型和腐烂状态
     """
     
-    def __init__(self, num_fruit_classes: int, num_state_classes: int, pretrained: bool = True):
+    def __init__(self, num_fruit_classes: int, num_state_classes: int, backbone: str = 'efficientnet_b4', pretrained: bool = True):
         """
         初始化水果分类模型
         
         Args:
             num_fruit_classes (int): 水果类型的数量
             num_state_classes (int): 腐烂状态的数量（通常为2，表示新鲜和腐烂）
+            backbone (str): 骨干网络类型，支持 'efficientnet_b3', 'efficientnet_b4', 'resnet50', 'resnet18', 'resnet34', 'resnet101'
             pretrained (bool): 是否使用预训练模型
         """
         super(FruitClassifier, self).__init__()
@@ -53,19 +54,17 @@ class FruitClassifier(nn.Module):
         # 记录类别数量
         self.num_fruit_classes = num_fruit_classes
         self.num_state_classes = num_state_classes
+        self.backbone = backbone
         
-        # 加载EfficientNet-B4作为特征提取器
-        if pretrained:
-            self.feature_extractor = models.efficientnet_b4(weights='IMAGENET1K_V1')
-        else:
-            self.feature_extractor = models.efficientnet_b4(weights=None)
-        
-        # 获取特征提取器的输出特征维度
-        feature_dim = self.feature_extractor.classifier[1].in_features
+        # 加载特征提取器
+        self.feature_extractor, feature_dim = self._create_backbone(backbone, pretrained)
         
         # 移除原始分类器
-        self.feature_extractor.classifier = nn.Identity()
-        
+        if 'efficientnet' in backbone:
+            self.feature_extractor.classifier = nn.Identity()
+        elif 'resnet' in backbone:
+            self.feature_extractor.fc = nn.Identity()
+            
         # 创建水果类型分类头
         self.fruit_classifier = nn.Sequential(
             nn.Dropout(0.2),
@@ -83,6 +82,42 @@ class FruitClassifier(nn.Module):
             nn.Dropout(0.2),
             nn.Linear(512, num_state_classes)
         )
+    
+    def _create_backbone(self, backbone: str, pretrained: bool) -> Tuple[nn.Module, int]:
+        """
+        创建骨干网络
+        
+        Args:
+            backbone (str): 骨干网络类型
+            pretrained (bool): 是否使用预训练模型
+            
+        Returns:
+            Tuple[nn.Module, int]: 骨干网络和特征维度
+        """
+        weights = 'IMAGENET1K_V1' if pretrained else None
+        
+        if backbone == 'efficientnet_b3':
+            model = models.efficientnet_b3(weights=weights)
+            feature_dim = model.classifier[1].in_features
+        elif backbone == 'efficientnet_b4':
+            model = models.efficientnet_b4(weights=weights)
+            feature_dim = model.classifier[1].in_features
+        elif backbone == 'resnet18':
+            model = models.resnet18(weights=weights)
+            feature_dim = model.fc.in_features
+        elif backbone == 'resnet34':
+            model = models.resnet34(weights=weights)
+            feature_dim = model.fc.in_features
+        elif backbone == 'resnet50':
+            model = models.resnet50(weights=weights)
+            feature_dim = model.fc.in_features
+        elif backbone == 'resnet101':
+            model = models.resnet101(weights=weights)
+            feature_dim = model.fc.in_features
+        else:
+            raise ValueError(f"不支持的骨干网络类型: {backbone}")
+            
+        return model, feature_dim
     
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -125,19 +160,20 @@ class FruitClassifier(nn.Module):
         return fruit_preds, state_preds
 
 
-def create_model(num_fruit_classes: int, num_state_classes: int, pretrained: bool = True) -> FruitClassifier:
+def create_model(num_fruit_classes: int, num_state_classes: int, backbone: str = 'efficientnet_b4', pretrained: bool = True) -> FruitClassifier:
     """
     创建水果分类模型
     
     Args:
         num_fruit_classes (int): 水果类型的数量
         num_state_classes (int): 腐烂状态的数量
+        backbone (str): 骨干网络类型，支持 'efficientnet_b3', 'efficientnet_b4', 'resnet50', 'resnet18', 'resnet34', 'resnet101'
         pretrained (bool): 是否使用预训练模型
         
     Returns:
         FruitClassifier: 初始化后的模型
     """
-    model = FruitClassifier(num_fruit_classes, num_state_classes, pretrained)
+    model = FruitClassifier(num_fruit_classes, num_state_classes, backbone, pretrained)
     return model
 
 
@@ -230,10 +266,15 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"使用设备: {device}")
     
-    # 创建模型
-    model = create_model(num_fruit_classes=3, num_state_classes=2, pretrained=True)
-    model = model.to(device)
-    print(f"模型创建成功: {model.__class__.__name__}")
+    # 测试不同的骨干网络
+    backbones = ['efficientnet_b3', 'efficientnet_b4', 'resnet50']
+    
+    for backbone in backbones:
+        print(f"\n测试骨干网络: {backbone}")
+        # 创建模型
+        model = create_model(num_fruit_classes=3, num_state_classes=2, backbone=backbone, pretrained=True)
+        model = model.to(device)
+        print(f"模型创建成功: {model.__class__.__name__} with {backbone}")
     
     # 生成一个测试批次
     batch_size = 4

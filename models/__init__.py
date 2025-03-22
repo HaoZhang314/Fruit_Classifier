@@ -11,7 +11,7 @@
 """
 
 # 从 efficientnet_model.py 导入主要类和函数
-from .efficientnet_model import (
+from .model import (
     FruitClassifier,
     create_model,
     MultiTaskLoss,

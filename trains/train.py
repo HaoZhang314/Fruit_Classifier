@@ -10,7 +10,7 @@
     python train.py [--config CONFIG] [--resume] [--epochs EPOCHS] [--batch_size BATCH_SIZE]
                     [--learning_rate LR] [--optimizer OPTIMIZER] [--scheduler SCHEDULER]
                     [--early_stopping EARLY_STOPPING] [--fruit_weight FRUIT_WEIGHT]
-                    [--state_weight STATE_WEIGHT] [--no_pretrained]
+                    [--state_weight STATE_WEIGHT] [--no_pretrained] [--backbone BACKBONE]
 """
 
 import os
@@ -31,8 +31,8 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 
 # 导入项目其他模块
-from models.efficientnet_model import create_model, MultiTaskLoss
-from data.loaders import get_data_loaders
+from models.model import create_model, MultiTaskLoss
+from data.loaders import get_data_loaders, FruitDataset, get_transforms
 from config import load_config
 from trains.trainer import Trainer, create_trainer
 from trains.evaluation import evaluate_and_report
@@ -80,6 +80,7 @@ def parse_args():
     parser.add_argument('--fruit_weight', type=float, default=None, help='水果类型损失权重')
     parser.add_argument('--state_weight', type=float, default=None, help='腐烂状态损失权重')
     parser.add_argument('--no_pretrained', action='store_true', help='不使用预训练模型')
+    parser.add_argument('--backbone', type=str, default=None, help='骨干网络类型 (efficientnet_b3, efficientnet_b4, resnet18, resnet34, resnet50, resnet101)')
     parser.add_argument('--seed', type=int, default=42, help='随机种子')
     
     return parser.parse_args()
@@ -115,6 +116,12 @@ def get_train_config(config_path: str = None) -> Dict[str, Any]:
     train_config.setdefault('early_stopping', 10)
     train_config.setdefault('save_best', True)
     
+    # 混合精度训练设置
+    if 'device' in config and 'mixed_precision' in config['device']:
+        train_config.setdefault('use_amp', config['device']['mixed_precision'])
+    else:
+        train_config.setdefault('use_amp', False)
+    
     # 优化器参数
     train_config.setdefault('optimizer', 'adam')
     train_config.setdefault('learning_rate', 0.001)
@@ -132,10 +139,17 @@ def get_train_config(config_path: str = None) -> Dict[str, Any]:
     train_config.setdefault('fruit_weight', 1.0)
     train_config.setdefault('state_weight', 1.0)
     
-    # 数据增强参数
-    if 'augmentation' not in train_config:
+    # 模型参数已移至model部分
+    
+    # 将数据增强参数从配置文件的augmentation部分获取
+    if 'augmentation' in config:
+        # 如果配置文件中有augmentation部分，直接使用
+        train_config['augmentation'] = config['augmentation']
+    elif 'augmentation' not in train_config:
+        # 如果配置文件和train_config中都没有augmentation，创建默认配置
         train_config['augmentation'] = {}
     
+    # 设置默认的图像级别数据增强参数
     aug_config = train_config['augmentation']
     aug_config.setdefault('horizontal_flip', True)
     aug_config.setdefault('rotation_angle', 15)
@@ -143,6 +157,15 @@ def get_train_config(config_path: str = None) -> Dict[str, Any]:
     aug_config.setdefault('contrast', 0.1)
     aug_config.setdefault('saturation', 0.1)
     aug_config.setdefault('hue', 0.05)
+    aug_config.setdefault('random_erasing', 0.2)
+    aug_config.setdefault('gaussian_noise', 0.05)
+    aug_config.setdefault('random_resized_crop', True)
+    
+    # 设置默认的批次级别数据增强参数
+    if 'mixup' not in aug_config:
+        aug_config['mixup'] = {}
+    aug_config['mixup'].setdefault('enabled', False)
+    aug_config['mixup'].setdefault('alpha', 0.2)
     
     return config
 
@@ -162,6 +185,10 @@ def update_config_from_args(config: Dict[str, Any], args: Dict[str, Any]) -> Dic
     updated_config = config.copy()
     train_config = updated_config.get('train', {}).copy()
     updated_config['train'] = train_config
+    model_config = updated_config.get('model', {}).copy()
+    updated_config['model'] = model_config
+    device_config = updated_config.get('device', {}).copy()
+    updated_config['device'] = device_config
     
     # 更新训练参数
     if 'epochs' in args and args['epochs'] is not None:
@@ -177,7 +204,7 @@ def update_config_from_args(config: Dict[str, Any], args: Dict[str, Any]) -> Dic
         train_config['scheduler'] = args['scheduler']
     
     if 'batch_size' in args and args['batch_size'] is not None:
-        updated_config['device']['batch_size'] = args['batch_size']
+        device_config['batch_size'] = args['batch_size']
     
     if 'weight_decay' in args and args['weight_decay'] is not None:
         train_config['weight_decay'] = args['weight_decay']
@@ -190,6 +217,13 @@ def update_config_from_args(config: Dict[str, Any], args: Dict[str, Any]) -> Dic
     
     if 'state_weight' in args and args['state_weight'] is not None:
         train_config['state_weight'] = args['state_weight']
+        
+    if 'backbone' in args and args['backbone'] is not None:
+        # 只更新模型配置中的backbone
+        model_config['backbone'] = args['backbone']
+        
+    if 'no_pretrained' in args and args['no_pretrained']:
+        model_config['pretrained'] = False
     
     return updated_config
 
@@ -225,10 +259,15 @@ def main():
     print(f"腐烂状态: {state_classes}")
     
     # 创建模型
-    pretrained = not args.no_pretrained
+    pretrained = not args.no_pretrained if args.no_pretrained else config.get('model', {}).get('pretrained', True)
+    backbone = config.get('model', {}).get('backbone', 'efficientnet_b4')
+    print(f"使用骨干网络: {backbone}")
+    print(f"是否使用预训练模型: {pretrained}")
+    
     model = create_model(
         num_fruit_classes=len(fruit_classes),
         num_state_classes=len(state_classes),
+        backbone=backbone,
         pretrained=pretrained
     )
     
@@ -248,6 +287,11 @@ def main():
     early_stopping = config['train'].get('early_stopping', 10)
     save_best = config['train'].get('save_best', True)
     
+    # 打印训练设置
+    print(f"训练轮数: {epochs}")
+    print(f"早停轮数: {early_stopping}")
+    print(f"保存最佳模型: {save_best}")
+    
     trainer.train(
         num_epochs=epochs,
         save_best=save_best,
@@ -263,15 +307,46 @@ def main():
         checkpoint = torch.load(best_checkpoint, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
         
-        # 评估模型
-        print("\n评估最佳模型:")
+        # 在验证集上评估模型
+        print("\n在验证集上评估最佳模型:")
         evaluate_and_report(
             model=model,
             data_loader=val_loader,
             device=device,
             fruit_class_names=fruit_classes,
             state_class_names=state_classes,
-            save_dir=checkpoint_dir
+            save_dir=os.path.join(checkpoint_dir, 'validation_results')
+        )
+        
+        # 创建测试集数据加载器进行最终评估
+        print("\n在测试集上评估最佳模型:")
+        # 创建一个临时的FruitDataLoader来获取测试集
+        test_dataset = FruitDataset(
+            csv_file=os.path.join(project_root, 
+                              config['data'].get('processed_dir', 'data'), 
+                              config['data']['dataset_csv']),
+            transform=get_transforms(mode='test', img_size=config['model']['img_size']),
+            split='test'  # 明确指定使用测试集
+        )
+        
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=config['device']['batch_size'],
+            shuffle=False,  # 测试集不需要打乱
+            num_workers=config['device']['num_workers'],
+            pin_memory=True
+        )
+        
+        print(f"测试集大小: {len(test_dataset)}")
+        
+        # 在测试集上进行最终评估
+        evaluate_and_report(
+            model=model,
+            data_loader=test_loader,
+            device=device,
+            fruit_class_names=fruit_classes,
+            state_class_names=state_classes,
+            save_dir=os.path.join(checkpoint_dir, 'test_results')
         )
     
     print("训练完成！")

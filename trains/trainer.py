@@ -23,6 +23,11 @@ from typing import Dict, Tuple, List, Optional, Union, Any, Callable
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+# 导入混合精度训练所需的模块
+from torch.amp import autocast
+from torch.cuda.amp import GradScaler
+# 导入数据增强模块
+from trains.augmentation import MixUp
 
 # 添加项目根目录到Python路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -31,7 +36,7 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 
 # 导入项目其他模块
-from models.efficientnet_model import FruitClassifier, MultiTaskLoss, calculate_metrics
+from models.model import FruitClassifier, MultiTaskLoss, calculate_metrics
 from config import load_config
 
 
@@ -70,6 +75,29 @@ class Trainer:
         
         # 将模型移动到指定设备
         self.model.to(self.device)
+        
+        # 混合精度训练设置
+        self.use_amp = self.config.get('use_amp', False)
+        if self.use_amp and torch.cuda.is_available():
+            self.scaler = GradScaler()
+            print("启用混合精度训练 (AMP)")
+        else:
+            self.scaler = None
+            if self.use_amp and not torch.cuda.is_available():
+                print("警告: 混合精度训练需要CUDA支持，但当前设备不支持CUDA。已禁用混合精度训练。")
+                self.use_amp = False
+                
+        # 批次级别的数据增强设置
+        self.use_mixup = False
+        self.mixup = None
+        
+        # 检查配置中是否启用MixUp
+        if 'augmentation' in self.config and 'mixup' in self.config['augmentation']:
+            mixup_config = self.config['augmentation']['mixup']
+            if mixup_config.get('enabled', False):
+                self.use_mixup = True
+                self.mixup = MixUp(alpha=mixup_config.get('alpha', 0.2))
+                print(f"启用MixUp数据增强 (alpha={mixup_config.get('alpha', 0.2)})")
         
         # 训练历史记录
         self.history = {
@@ -113,20 +141,49 @@ class Trainer:
             fruit_targets = fruit_targets.to(self.device)
             state_targets = state_targets.to(self.device)
             
+            # 应用批次级别的数据增强（如MixUp）
+            if self.use_mixup:
+                # MixUp增强需要在模型前向传播前应用
+                images, mixed_fruit_targets, mixed_state_targets = self.mixup((images, fruit_targets, state_targets))
+                # 使用混合后的目标
+                fruit_targets = mixed_fruit_targets
+                state_targets = mixed_state_targets
+            
             # 清零梯度
             self.optimizer.zero_grad()
             
-            # 前向传播
-            fruit_logits, state_logits = self.model(images)
-            
-            # 计算损失
-            loss, loss_dict = self.criterion(fruit_logits, state_logits, fruit_targets, state_targets)
-            
-            # 反向传播
-            loss.backward()
-            
-            # 更新参数
-            self.optimizer.step()
+            # 前向传播和损失计算（使用混合精度）
+            if self.use_amp:
+                with autocast(device_type='cuda'):
+                    fruit_logits, state_logits = self.model(images)
+                    # 如果使用了MixUp，需要修改损失函数的调用方式
+                    if self.use_mixup:
+                        # MixUp使用软标签，需要直接计算交叉熵损失
+                        fruit_loss = nn.CrossEntropyLoss(reduction='mean')(fruit_logits, fruit_targets)
+                        state_loss = nn.CrossEntropyLoss(reduction='mean')(state_logits, state_targets)
+                        loss = fruit_loss + state_loss
+                        loss_dict = {'fruit_loss': fruit_loss, 'state_loss': state_loss}
+                    else:
+                        loss, loss_dict = self.criterion(fruit_logits, state_logits, fruit_targets, state_targets)
+                
+                # 使用GradScaler进行反向传播和参数更新
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                # 常规前向传播和反向传播
+                fruit_logits, state_logits = self.model(images)
+                # 如果使用了MixUp，需要修改损失函数的调用方式
+                if self.use_mixup:
+                    # MixUp使用软标签，需要直接计算交叉熵损失
+                    fruit_loss = nn.CrossEntropyLoss(reduction='mean')(fruit_logits, fruit_targets)
+                    state_loss = nn.CrossEntropyLoss(reduction='mean')(state_logits, state_targets)
+                    loss = fruit_loss + state_loss
+                    loss_dict = {'fruit_loss': fruit_loss, 'state_loss': state_loss}
+                else:
+                    loss, loss_dict = self.criterion(fruit_logits, state_logits, fruit_targets, state_targets)
+                loss.backward()
+                self.optimizer.step()
             
             # 记录损失
             running_loss += loss.item()
@@ -136,10 +193,21 @@ class Trainer:
             state_preds = torch.argmax(state_logits, dim=1)
             
             # 收集预测和目标用于计算指标
-            all_fruit_preds.append(fruit_preds.cpu().numpy())
-            all_state_preds.append(state_preds.cpu().numpy())
-            all_fruit_targets.append(fruit_targets.cpu().numpy())
-            all_state_targets.append(state_targets.cpu().numpy())
+            # 如果使用了MixUp，我们需要还原原始标签进行评估
+            if self.use_mixup:
+                # 对于MixUp，我们只收集预测结果，但不使用混合后的标签进行评估
+                # 我们将在批次数据中获取原始标签
+                original_fruit_targets = torch.argmax(fruit_targets, dim=1) if len(fruit_targets.shape) > 1 else fruit_targets
+                original_state_targets = torch.argmax(state_targets, dim=1) if len(state_targets.shape) > 1 else state_targets
+                all_fruit_preds.append(fruit_preds.cpu().numpy())
+                all_state_preds.append(state_preds.cpu().numpy())
+                all_fruit_targets.append(original_fruit_targets.cpu().numpy())
+                all_state_targets.append(original_state_targets.cpu().numpy())
+            else:
+                all_fruit_preds.append(fruit_preds.cpu().numpy())
+                all_state_preds.append(state_preds.cpu().numpy())
+                all_fruit_targets.append(fruit_targets.cpu().numpy())
+                all_state_targets.append(state_targets.cpu().numpy())
             
             # 更新进度条
             pbar.set_postfix({
@@ -195,11 +263,14 @@ class Trainer:
                 fruit_targets = fruit_targets.to(self.device)
                 state_targets = state_targets.to(self.device)
                 
-                # 前向传播
-                fruit_logits, state_logits = self.model(images)
-                
-                # 计算损失
-                loss, loss_dict = self.criterion(fruit_logits, state_logits, fruit_targets, state_targets)
+                # 前向传播（验证时也使用混合精度，但不需要梯度缩放）
+                if self.use_amp:
+                    with autocast(device_type='cuda'):
+                        fruit_logits, state_logits = self.model(images)
+                        loss, loss_dict = self.criterion(fruit_logits, state_logits, fruit_targets, state_targets)
+                else:
+                    fruit_logits, state_logits = self.model(images)
+                    loss, loss_dict = self.criterion(fruit_logits, state_logits, fruit_targets, state_targets)
                 
                 # 记录损失
                 running_loss += loss.item()

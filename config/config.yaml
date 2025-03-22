@@ -6,15 +6,71 @@ data:
   processed_dir: data
   # 预处理后的CSV文件名
   dataset_csv: fruit_dataset.csv
+  # 训练集、验证集和测试集划分比例
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
 
-#模型相关配置
+# 模型相关配置
 model:
   # 训练图像大小
-  img_size: 380 # EfficientNet-B4的输入大小
+  img_size: 224 # EfficientNet-B4的输入大小380
+  # 骨干网络类型，支持 efficientnet_b3, efficientnet_b4, resnet18, resnet34, resnet50, resnet101
+  backbone: resnet50
+  # 是否使用预训练模型
+  pretrained: true
 
 # 设备相关配置
 device:
   # 数据加载工作线程数
-  num_workers: 4
+  num_workers: 8
   # 批次大小
   batch_size: 32
+  # 是否使用混合精度训练
+  mixed_precision: true
+
+# 训练相关配置
+train:
+  # 训练轮数
+  epochs: 30
+  # 检查点保存目录
+  save_dir: checkpoints
+  # 是否保存最佳模型
+  save_best: true
+  # 早停轮数，当连续多少轮验证集指标没有提升时停止训练
+  early_stopping: 10
+  
+  # 优化器参数
+  optimizer: adam  # 支持 adam, sgd, adamw
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  momentum: 0.9  # 仅用于SGD
+  
+  # 学习率调度器参数
+  scheduler: cosine  # 支持 step, cosine, plateau, none
+  step_size: 10  # 仅用于StepLR
+  gamma: 0.1  # 仅用于StepLR
+  patience: 5  # 仅用于ReduceLROnPlateau
+  factor: 0.1  # 仅用于ReduceLROnPlateau
+  
+  # 多任务损失权重
+  fruit_weight: 1.0  # 水果类型分类损失权重
+  state_weight: 1.0  # 腐烂状态分类损失权重
+  
+# 数据增强参数
+augmentation:
+  # 图像级别的数据增强
+  horizontal_flip: true  # 是否进行水平翻转
+  rotation_angle: 15  # 旋转角度范围
+  brightness: 0.1  # 亮度变化范围
+  contrast: 0.1  # 对比度变化范围
+  saturation: 0.1  # 饱和度变化范围
+  hue: 0.05  # 色调变化范围
+  random_erasing: 0.2  # 随机擦除概率
+  gaussian_noise: 0.05  # 高斯噪声标准差
+  random_resized_crop: true  # 是否使用随机裁剪和调整大小
+  
+  # 批次级别的数据增强
+  mixup: 
+    enabled: false  # 是否启用MixUp增强
+    alpha: 0.2  # MixUp的alpha参数，控制混合程度

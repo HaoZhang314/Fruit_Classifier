@@ -37,6 +37,9 @@ from config import load_config
 config_path = os.path.join(project_root, 'config', 'config.yaml')
 config = load_config(config_path)
 
+# 导入数据增强模块
+from trains.augmentation import get_augmentation_transforms
+
 def get_transforms(mode: str = 'train', img_size: int = config['model']['img_size']) -> transforms.Compose:
     """
     获取数据预处理和增强的变换
@@ -48,31 +51,20 @@ def get_transforms(mode: str = 'train', img_size: int = config['model']['img_siz
     Returns:
         transforms.Compose: 组合的变换操作
     """
-    # 基础变换 - 所有模式都需要的变换
-    base_transforms = [
-        # 调整图像大小
-        transforms.Resize((img_size, img_size)),
-        # 转换为Tensor
-        transforms.ToTensor(),
-        # 标准化，根据模型预训练时的均值和标准差
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ]
+    # 使用augmentation模块中的高级数据增强功能
+    # 从配置文件中获取数据增强设置
+    augmentation_config = config.get('augmentation', {
+        'horizontal_flip': True,
+        'rotation_angle': 15,
+        'brightness': 0.1,
+        'contrast': 0.1,
+        'saturation': 0.1,
+        'hue': 0.05,
+        'gaussian_noise': 0.05,
+        'random_erasing': 0.2
+    })
     
-    # 训练模式额外的数据增强
-    if mode == 'train':
-        train_transforms = [
-            # 随机水平翻转
-            transforms.RandomHorizontalFlip(),
-            # 随机旋转
-            transforms.RandomRotation(15),
-            # 随机颜色抖动
-            transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.05),
-            # 随机仿射变换
-            transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
-        ]
-        return transforms.Compose(train_transforms + base_transforms)
-    else:
-        return transforms.Compose(base_transforms)
+    return get_augmentation_transforms(augmentation_config, mode, img_size)
 
 
 class FruitDataset(Dataset):
@@ -82,7 +74,7 @@ class FruitDataset(Dataset):
     加载水果图像和对应的标签（水果类型和腐烂状态）
     """
     
-    def __init__(self, csv_file: str, transform: Optional[Callable] = None, split: str = 'train'):
+    def __init__(self, csv_file: str, transform: Optional[Callable] = None, split: str = 'train', custom_indices: Optional[List[int]] = None):
         """
         初始化数据集
         
@@ -90,12 +82,19 @@ class FruitDataset(Dataset):
             csv_file (str): 包含图像路径和标签的CSV文件路径
             transform (Callable, optional): 图像变换函数
             split (str): 数据集划分，'train'或'test'
+            custom_indices (List[int], optional): 自定义的索引列表，用于从指定split中进一步选择样本
         """
         self.data_frame = pd.read_csv(csv_file)
         
         # 仅保留指定split的数据
         if split in ['train', 'test']:
             self.data_frame = self.data_frame[self.data_frame['split'] == split]
+        
+        # 如果提供了自定义索引，则进一步筛选数据
+        if custom_indices is not None:
+            # 确保索引不超出范围
+            valid_indices = [i for i in custom_indices if i < len(self.data_frame)]
+            self.data_frame = self.data_frame.iloc[valid_indices].reset_index(drop=True)
         
         self.transform = transform
         
@@ -198,24 +197,48 @@ class FruitDataLoader:
     
     def get_loaders(self) -> Tuple[DataLoader, DataLoader]:
         """
-        获取训练集和测试集的DataLoader
+        获取训练集和验证集的DataLoader
+        
+        在训练阶段，只使用训练集数据，并从中划分出一部分作为验证集
+        测试集数据仅用于最终模型评估
         
         Returns:
-            Tuple[DataLoader, DataLoader]: (训练集DataLoader, 测试集DataLoader)
+            Tuple[DataLoader, DataLoader]: (训练集DataLoader, 验证集DataLoader)
         """
-        # 创建训练集
+        # 加载训练集数据
+        train_df = pd.read_csv(self.csv_file)
+        train_df = train_df[train_df['split'] == 'train']
+        
+        # 打印训练集数据分布
+        print(f"加载了 {len(train_df)} 个训练样本")
+        
+        # 按水果类型和腐烂状态分层，划分训练集和验证集
+        from sklearn.model_selection import train_test_split
+        
+        # 使用80%的训练数据进行训练，20%用于验证
+        train_indices, val_indices = train_test_split(
+            range(len(train_df)), 
+            test_size=0.2, 
+            random_state=42,
+            stratify=train_df[['fruit_type', 'state']]
+        )
+        
+        # 创建训练集和验证集
         train_dataset = FruitDataset(
             csv_file=self.csv_file,
             transform=self.train_transform,
-            split='train'
+            split='train',
+            custom_indices=train_indices
         )
         
-        # 创建测试集
-        test_dataset = FruitDataset(
+        val_dataset = FruitDataset(
             csv_file=self.csv_file,
-            transform=self.test_transform,
-            split='test'
+            transform=self.test_transform,  # 验证集使用测试变换
+            split='train',  # 仍然从训练集中选择数据
+            custom_indices=val_indices
         )
+        
+        print(f"训练集大小: {len(train_dataset)}, 验证集大小: {len(val_dataset)}")
         
         # 创建DataLoader
         train_loader = DataLoader(
@@ -226,15 +249,15 @@ class FruitDataLoader:
             pin_memory=True
         )
         
-        test_loader = DataLoader(
-            test_dataset,
+        val_loader = DataLoader(
+            val_dataset,
             batch_size=self.batch_size,
-            shuffle=False,  # 测试集不需要打乱
+            shuffle=False,  # 验证集不需要打乱
             num_workers=self.num_workers,
             pin_memory=True
         )
         
-        return train_loader, test_loader
+        return train_loader, val_loader
     
     def get_class_info(self) -> Tuple[List[str], List[str]]:
         """
@@ -257,7 +280,7 @@ def get_data_loaders(config: Dict) -> Tuple[DataLoader, DataLoader, Tuple[List[s
         
     Returns:
         Tuple[DataLoader, DataLoader, Tuple[List[str], List[str]]]: 
-            (训练集DataLoader, 测试集DataLoader, (水果类型列表, 腐烂状态列表))
+            (训练集DataLoader, 验证集DataLoader, (水果类型列表, 腐烂状态列表))
     """
     # 获取项目根目录
     current_dir = os.path.dirname(os.path.abspath(__file__))
