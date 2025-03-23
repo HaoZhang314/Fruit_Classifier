@@ -492,8 +492,8 @@ def main():
     if args.batch_size:
         config['device']['batch_size'] = args.batch_size
     
-    # 获取数据加载器
-    _, test_loader, class_info = get_data_loaders(config)
+    # 获取数据加载器（使用测试集数据）
+    _, test_loader, _ = get_data_loaders(config, mode='eval')
     
     # 获取设备
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

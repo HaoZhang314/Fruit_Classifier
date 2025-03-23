@@ -259,6 +259,40 @@ class FruitDataLoader:
         
         return train_loader, val_loader
     
+    def get_test_loader(self) -> DataLoader:
+        """
+        获取测试集的DataLoader
+        
+        Returns:
+            DataLoader: 测试集DataLoader
+        """
+        # 加载测试集数据
+        test_df = pd.read_csv(self.csv_file)
+        test_df = test_df[test_df['split'] == 'test']
+        
+        # 打印测试集数据分布
+        print(f"加载了 {len(test_df)} 个测试样本")
+        
+        # 创建测试集
+        test_dataset = FruitDataset(
+            csv_file=self.csv_file,
+            transform=self.test_transform,
+            split='test'
+        )
+        
+        print(f"测试集大小: {len(test_dataset)}")
+        
+        # 创建DataLoader
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,  # 测试集不需要打乱
+            num_workers=self.num_workers,
+            pin_memory=True
+        )
+        
+        return test_loader
+        
     def get_class_info(self) -> Tuple[List[str], List[str]]:
         """
         获取类别信息
@@ -271,16 +305,18 @@ class FruitDataLoader:
         return temp_dataset.get_class_names()
 
 
-def get_data_loaders(config: Dict) -> Tuple[DataLoader, DataLoader, Tuple[List[str], List[str]]]:
+def get_data_loaders(config: Dict, mode: str = 'train') -> Tuple[DataLoader, DataLoader, Tuple[List[str], List[str]]]:
     """
     根据配置创建数据加载器
     
     Args:
         config (Dict): 配置字典，包含数据加载相关参数
+        mode (str): 模式，'train'表示训练模式，'eval'表示评估模式
         
     Returns:
         Tuple[DataLoader, DataLoader, Tuple[List[str], List[str]]]: 
-            (训练集DataLoader, 验证集DataLoader, (水果类型列表, 腐烂状态列表))
+            训练模式: (训练集DataLoader, 验证集DataLoader, (水果类型列表, 腐烂状态列表))
+            评估模式: (None, 测试集DataLoader, (水果类型列表, 腐烂状态列表))
     """
     # 获取项目根目录
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -304,11 +340,17 @@ def get_data_loaders(config: Dict) -> Tuple[DataLoader, DataLoader, Tuple[List[s
         shuffle=True
     )
     
-    # 获取数据加载器和类别信息
-    train_loader, test_loader = loader.get_loaders()
+    # 获取类别信息
     class_info = loader.get_class_info()
     
-    return train_loader, test_loader, class_info
+    if mode == 'eval':
+        # 评估模式：只加载测试集数据
+        test_loader = loader.get_test_loader()
+        return None, test_loader, class_info
+    else:
+        # 训练模式：加载训练集和验证集数据
+        train_loader, val_loader = loader.get_loaders()
+        return train_loader, val_loader, class_info
 
 
 if __name__ == '__main__':
