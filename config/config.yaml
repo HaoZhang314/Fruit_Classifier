@@ -13,7 +13,7 @@ model:
   # 训练图像大小
   img_size: 224 # EfficientNet-B4的输入大小380
   # 骨干网络类型，支持 efficientnet_b3, efficientnet_b4, resnet18, resnet34, resnet50, resnet101
-  backbone: efficientnet_b3
+  backbone: resnet50
   # 是否使用预训练模型
   pretrained: false
 
